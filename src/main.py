@@ -23,7 +23,18 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Associa as extensões à aplicação 'app'
 db.init_app(app)
 jwt.init_app(app)
-cors.init_app(app)
+
+# ####################################################################
+# INÍCIO DA ALTERAÇÃO - CONFIGURAÇÃO DO CORS
+# ####################################################################
+# Substituímos a linha simples do CORS por esta configuração mais específica
+frontend_url = "https://pro-reps-crm-frontend.onrender.com"
+# Permite pedidos da nossa URL de frontend e também do ambiente de desenvolvimento local
+cors.init_app(app, resources={r"/api/*": {"origins": [frontend_url, "http://localhost:3000", "http://127.0.0.1:5173"]}} )
+# ####################################################################
+# FIM DA ALTERAÇÃO
+# ####################################################################
+
 
 # --- IMPORTAÇÃO TARDIA DOS BLUEPRINTS ---
 # Importe os blueprints DEPOIS que 'app' e 'db' estão configurados
@@ -72,4 +83,3 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=True)
-
