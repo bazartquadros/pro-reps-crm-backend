@@ -3,7 +3,7 @@ import sys
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from src.models.user import db, User
@@ -25,14 +25,34 @@ from src.routes.reports import reports_bp
 from src.routes.users import users_bp
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
-app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
-app.config['JWT_SECRET_KEY'] = 'jwt-secret-string-change-in-production'
 
-# Configurar CORS
+# --- INÍCIO DAS CONFIGURAÇÕES ---
+
+# Carrega as chaves secretas a partir de variáveis de ambiente para segurança
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default-secret-key-for-dev')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'default-jwt-key-for-dev')
+
+# Configuração do banco de dados
+# Em produção (Render), usa a DATABASE_URL. Para desenvolvimento local, usa um SQLite.
+database_url = os.environ.get('DATABASE_URL')
+if database_url:
+    # Corrige a URL do PostgreSQL para compatibilidade com SQLAlchemy
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+else:
+    # Fallback para um banco de dados SQLite se DATABASE_URL não estiver definida
+    # Ideal para desenvolvimento local sem precisar de um servidor de banco de dados
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///local_dev.db'
+
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# --- FIM DAS CONFIGURAÇÕES ---
+
+# Inicializa as extensões
 CORS(app)
-
-# Configurar JWT
 jwt = JWTManager(app)
+db.init_app(app)
 
 # Registrar blueprints
 app.register_blueprint(auth_bp, url_prefix='/api')
@@ -45,62 +65,36 @@ app.register_blueprint(companies_bp, url_prefix='/api')
 app.register_blueprint(reports_bp, url_prefix='/api')
 app.register_blueprint(users_bp, url_prefix='/api')
 
-# Configuração do banco de dados
-# Para HostGator com MySQL
-app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://fabr9458_proreps_user:Candeias123@localhost/fabr9458_proreps_db"
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# Para desenvolvimento local com SQLite (descomente a linha abaixo se necessário)
-# app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'database', 'app.db')}"
-
-db.init_app(app)
-
-with app.app_context():
-    db.create_all()
-    
-    # Criar dados padrão apenas se as tabelas estiverem vazias
-    # Isso evita duplicação de dados em reinicializações
+# Endpoint de health check para verificar o status da API
+@app.route('/api/health')
+def health_check():
     try:
-        User.create_default_users()
-        Customer.create_default_customers()
-        Sale.create_default_sales()
-        Lead.create_default_leads()
-        Quote.create_default_quotes()
-        Appointment.create_default_appointments()
-        Company.create_default_companies()
-        Report.create_default_reports()
-        print("Dados padrão criados com sucesso!")
+        # Tenta fazer uma consulta simples para verificar a conexão com o DB
+        db.session.execute('SELECT 1')
+        db_status = 'connected'
     except Exception as e:
-        print(f"Erro ao criar dados padrão: {e}")
-        # Em caso de erro, continuar sem criar dados padrão
-        pass
+        db_status = f'error: {e}'
 
+    return jsonify({
+        'status': 'ok',
+        'database_status': db_status
+    })
+
+# Rota para servir a aplicação frontend (React, Vue, etc.)
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    static_folder_path = app.static_folder
-    if static_folder_path is None:
-        return "Static folder not configured", 404
-
-    if path != "" and os.path.exists(os.path.join(static_folder_path, path)):
-        return send_from_directory(static_folder_path, path)
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
     else:
-        index_path = os.path.join(static_folder_path, 'index.html')
-        if os.path.exists(index_path):
-            return send_from_directory(static_folder_path, 'index.html')
-        else:
-            return "index.html not found", 404
+        return send_from_directory(app.static_folder, 'index.html')
 
-# Endpoint de health check
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Endpoint para verificar se a API está funcionando"""
-    return jsonify({
-        'status': 'OK',
-        'message': 'Pró Reps CRM API está funcionando',
-        'version': '2.0',
-        'database': 'MySQL' if 'mysql' in app.config['SQLALCHEMY_DATABASE_URI'] else 'SQLite'
-    })
-
+# Bloco para execução local (não é executado na Render)
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    with app.app_context():
+        print("Ambiente de desenvolvimento local detectado.")
+        print(f"Usando banco de dados: {app.config['SQLALCHEMY_DATABASE_URI']}")
+        db.create_all()
+        print("Tabelas do banco de dados criadas (se não existiam).")
+    app.run(host='0.0.0.0', port=5000, debug=True)
+
